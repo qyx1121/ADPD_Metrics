@@ -1,3 +1,4 @@
+import json
 import glob
 import argparse
 
@@ -49,10 +50,13 @@ def main(args):
 
         acpc_slices = rotate(acpc_slices, angle = -90, axes=(1, 2))
 
-        metrics_detector.det_bvr_zei(acpc_slices[0], mid_line)
-        metrics_detector.det_ca(acpc_slices[1])
-        metrics_detector.det_evans(image)
-
+        bvr_result = metrics_detector.det_bvr_zei(acpc_slices[0], mid_line)
+        ca_result = metrics_detector.det_ca(acpc_slices[1])
+        ei_result = metrics_detector.det_evans(image)
+    
+        image_name = osp.basename(dcm_p)
+        result = {"BVR":bvr_result["BVR"], "zEI": bvr_result["zEI"], "CA":ca_result, "EI":ei_result}
+        json.dump(result, osp.join(args.path_predictions, image_name + ".json"))
 
 
 if __name__ == "__main__":

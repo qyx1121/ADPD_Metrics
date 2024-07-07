@@ -15,7 +15,8 @@ class MetricsDetector(object):
         self.evans_seg = ort.InferenceSession(osp.join(args.model_dir, "evans_seg.onnx"), providers=[provider])
  
     def det_evans(self, ei_image):
-       
+        
+        result = {}
         ### detect proper evans slices ###
         x, y, z = ei_image.shape
         low_bound, high_bound = int(0.3 * y), int(0.7 * y)
@@ -108,9 +109,22 @@ class MetricsDetector(object):
                 max_boundary_length = interval
                 b_minw, b_maxw = left_max, right_min + center_line
                 b_minh = b_maxh = x
+        
+        plt.plot([c_maxw, c_minw], [c_maxh, c_minh],  marker = 'o', color = 'r', markersize = 1)
+        plt.plot([b_maxw, b_minw], [b_maxh, b_minh],  marker = 'o', color = 'r', markersize = 1)
 
+        print(f"Evans is : {max_center_length}mm / {max_boundary_length}mm = ")
+        
+        
+        result["data"] = {max_center_length / max_boundary_length}
+        result["image"] = np.rot90(candidates[max_center_id], -1)
+        result["line_1"] = [[b_maxw, b_maxh], [b_minw, b_minh]]
+        result["line_2"] = [[c_maxw, c_maxh], [c_minw, c_minh]]
+        return result
 
     def det_ca(self, ca_image):
+
+        result = {}
         ori_height, ori_width = ca_image.shape
         images = self.unet_processor(ca_image)
         _, new_height, new_width = images.shape
@@ -123,7 +137,6 @@ class MetricsDetector(object):
         restored_mask = restored_mask.astype(np.uint8)
 
         ### post-process
-
         # CA_mask = post_process_seg(restored_mask)
         CA_mask = cv2.blur(restored_mask, (3, 3))
         CA_mask = post_process_seg(CA_mask, 20)
@@ -166,9 +179,15 @@ class MetricsDetector(object):
             
         theta_degrees = np.degrees(theta_radians)
 
-        print("CA is {:.2f}°".format(theta_degrees))
+        result["data"] = theta_degrees
+        result["points"] = [(left_ymin, left_xmin), (y_max, x_max), (right_ymin, right_xmin)]
+        result["image"] = ca_image
+       #plt.plot([left_ymin, y_max, right_ymin], [left_xmin, x_max, right_xmin])
+        return result
 
     def det_bvr_zei(self, bvr_image, mid_line):
+        #result = {"skull height":[], "lateral ventricles height":[], "brain above ventricles":[]}
+
         ori_height, ori_width  = bvr_image.shape
         outputs = self.bvr_seg.run(None, {"input": self.unet_processor(bvr_image).unsqueeze(0).numpy()})[0]
 
@@ -181,10 +200,12 @@ class MetricsDetector(object):
 
         seg_image = restored_mask.copy()
         original_image = gray_to_rgb(bvr_image.copy())
+        #plt.imshow(original_image)
         ### for Highest line ###
         head_height_indexes = np.argwhere(seg_image[:, mid_line] == 2)
         head_height = head_height_indexes.max() - head_height_indexes.min()
 
+        #result["skull height"] = [(mid_line, head_height_indexes.max()), (mid_line, head_height_indexes.min())]
         #plt.plot([mid_line, mid_line], [head_height_indexes.max(), head_height_indexes.min()],  marker = 'o', color = 'r', markersize = 1)
 
         centroid = np.argwhere(seg_image == 1)
@@ -212,6 +233,7 @@ class MetricsDetector(object):
             max_x = max_right_x
 
         centroid_height = max_x - pos_x
+        #result["lateral ventricles height"] = [(pos_y, pos_x), (pos_y, max_x)]
         #plt.plot([pos_y, pos_y], [pos_x, max_x],  marker = 'o', color = 'y', markersize = 1)
 
         ### calculate zEI ###
@@ -221,5 +243,11 @@ class MetricsDetector(object):
         head_gap = pos_x - head_x
         BVR = head_gap / centroid_height
 
+        #result["brain above ventricles"] = [(pos_y, pos_x), (pos_y, head_x)]
         #plt.plot([pos_y, pos_y], [pos_x, head_x],  marker = 'o', color = 'b', markersize = 1)
-        print(f"zEI: {centroid_height} mm / {head_height} mm = {zEI} \n BVR: {head_gap} mm / {centroid_height} mm = {BVR}")
+        result = {}
+        result["zEI"] = {"data":zEI, "line_1":[[pos_y, pos_x], [pos_y, max_x]], "line_2":[[mid_line, head_height_indexes.max()], [mid_line, head_height_indexes.min()]], "image":bvr_image}
+        result["BVR"] = {"data":BVR, "line_1":[[pos_y, pos_x], [pos_y, max_x]], "line_2":[[pos_y, pos_x], [pos_y, max_x]], "image":bvr_image}
+        #print(f"zEI: {centroid_height} mm / {head_height} mm = {zEI} \n BVR: {head_gap} mm / {centroid_height} mm = {BVR}")
+
+        return result

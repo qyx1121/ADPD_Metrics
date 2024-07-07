@@ -21,7 +21,6 @@ import copy
 from copy import deepcopy
 import sys
 
-
 def visualize_masks(image, mask):
 
     ### RGB image ###
@@ -152,7 +151,7 @@ def register(args, image):
     images = [x_slice, y_slice, z_slice]
 
     provider = 'CUDAExecutionProvider' if args.gpu else 'CPUExecutionProvider'
-    model = ort.InferenceSession(osp.join(args.model_root, "register.onnx"), providers=[provider])
+    model = ort.InferenceSession(osp.join(args.model_dir, "register.onnx"), providers=[provider])
     processor = get_resnet_processor()
 
     for idx, im in enumerate(images):
@@ -252,7 +251,7 @@ def segmentation(slices, ori_images, model):
 
         x, y = ori_images[0].shape
         ### 将得到的mask恢复到原始尺度
-        mask = zoom(outputs, (x / 224, y / 224), order=3)
+        mask = zoom(outputs, (x / 224, y / 224), order=1)
         mask = np.clip(mask, 0, 2)
         restored_mask.append(mask)
     restored_mask = np.stack(restored_mask)
@@ -275,7 +274,7 @@ def segmentation(slices, ori_images, model):
 def adjust_z(args, image):
 
     provider = 'CUDAExecutionProvider' if args.gpu else 'CPUExecutionProvider'
-    model = ort.InferenceSession(osp.join(args.model_root, "brain_seg_z.onnx"), providers=[provider])
+    model = ort.InferenceSession(osp.join(args.model_dir, "brain_seg_z.onnx"), providers=[provider])
     preprocess = get_unet_processor()
     bound = image.shape[-1]
     low_bound = int(bound * 0.2)
@@ -318,13 +317,14 @@ def adjust_y(args, image):
 
     candidates = ori_y_images[positive_indexes == 1]
     ori_images = candidates[::2]
+
+    preprocess = get_unet_processor()
     slices = torch.stack([preprocess(ori_images[i]) for i in len(ori_images)]) 
 
 
     provider = 'CUDAExecutionProvider' if args.gpu else 'CPUExecutionProvider'
-    model = ort.InferenceSession(osp.join(args.model_root, "brain_seg_y.onnx"), providers=[provider])
+    model = ort.InferenceSession(osp.join(args.model_dir, "brain_seg_y.onnx"), providers=[provider])
 
-    preprocess = get_unet_processor()
     # bound = image.shape[1]
     # low_bound = int(bound * 0.2)
     # high_bound = int(bound * 0.4)
@@ -380,7 +380,7 @@ def postprocess_convert_points(points, new_size, ori_size):
 
 def find_acpc_line(args, images):
     provider = 'CUDAExecutionProvider' if args.gpu else 'CPUExecutionProvider'
-    model = ort.InferenceSession(osp.join(args.model_root, "acpc_detector.onnx"), providers=[provider])
+    model = ort.InferenceSession(osp.join(args.model_dir, "acpc_detector.onnx"), providers=[provider])
     # RESNET_WEIGHTS = "/mnt/hdd1/qinyixin/huaxiproj/AC-PC/models/resnet-152"
     # model = AcPc_FPN_Detector(RESNET_WEIGHTS)
     # ckpt = torch.load("/home/qinyixin/workspace/Swin-Unet/AC_PC/AC_PC_ckpt/resnet-152_fpn_256_999.pth", map_location="cpu")
