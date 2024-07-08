@@ -241,7 +241,7 @@ class MetricsDetector(object):
         result["zEI"] = {"data":zEI, "line_1": np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist(), 
             "line_2":np.round([[mid_line, head_height_indexes.max()], [mid_line, head_height_indexes.min()]]).astype(np.int16).tolist()}
         result["BVR"] = {"data":BVR, "line_1":np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist(), 
-                         "line_2":np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist()}
+                         "line_2":np.round([[pos_y, pos_x], [pos_y, head_x]]).astype(np.int16).tolist()}
         #print(f"zEI: {centroid_height} mm / {head_height} mm = {zEI} \n BVR: {head_gap} mm / {centroid_height} mm = {BVR}")
 
         return result, bvr_image
