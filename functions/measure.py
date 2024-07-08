@@ -45,13 +45,10 @@ class MetricsDetector(object):
         restored_mask = restored_mask.astype(np.uint8)
 
         ### post process ###
+
         for i in range(len(restored_mask)):
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(restored_mask[i])
-            area_threshold = 10
-            for j in range(1, num_labels):
-                area = stats[j, cv2.CC_STAT_AREA]
-                if area <= area_threshold:
-                    restored_mask[i][labels == j] = 0
+            restored_mask[i] = post_process_seg(restored_mask[i])
+
         center_mask = deepcopy(restored_mask) 
         center_mask[center_mask == 1] = 0
 
@@ -110,17 +107,13 @@ class MetricsDetector(object):
                 b_minw, b_maxw = left_max, right_min + center_line
                 b_minh = b_maxh = x
         
-        plt.plot([c_maxw, c_minw], [c_maxh, c_minh],  marker = 'o', color = 'r', markersize = 1)
-        plt.plot([b_maxw, b_minw], [b_maxh, b_minh],  marker = 'o', color = 'r', markersize = 1)
-
-        print(f"Evans is : {max_center_length}mm / {max_boundary_length}mm = ")
+        #plt.plot([c_maxw, c_minw], [c_maxh, c_minh],  marker = 'o', color = 'r', markersize = 1)
+        #plt.plot([b_maxw, b_minw], [b_maxh, b_minh],  marker = 'o', color = 'r', markersize = 1)
         
-        
-        result["data"] = {max_center_length / max_boundary_length}
-        result["image"] = np.rot90(candidates[max_center_id], -1)
-        result["line_1"] = [[b_maxw, b_maxh], [b_minw, b_minh]]
-        result["line_2"] = [[c_maxw, c_maxh], [c_minw, c_minh]]
-        return result
+        result["data"] = max_center_length / max_boundary_length
+        result["line_1"] = np.round([[b_maxw, b_maxh], [b_minw, b_minh]]).astype(np.int16).tolist()
+        result["line_2"] = np.round([[c_maxw, c_maxh], [c_minw, c_minh]]).astype(np.int16).tolist()
+        return result, np.rot90(candidates[max_center_id], -1)
 
     def det_ca(self, ca_image):
 
@@ -180,10 +173,9 @@ class MetricsDetector(object):
         theta_degrees = np.degrees(theta_radians)
 
         result["data"] = theta_degrees
-        result["points"] = [(left_ymin, left_xmin), (y_max, x_max), (right_ymin, right_xmin)]
-        result["image"] = ca_image
+        result["points"] = np.round([[left_ymin, left_xmin], [y_max, x_max], [right_ymin, right_xmin]]).astype(np.int16).tolist()
        #plt.plot([left_ymin, y_max, right_ymin], [left_xmin, x_max, right_xmin])
-        return result
+        return result, ca_image
 
     def det_bvr_zei(self, bvr_image, mid_line):
         #result = {"skull height":[], "lateral ventricles height":[], "brain above ventricles":[]}
@@ -195,9 +187,9 @@ class MetricsDetector(object):
         outputs = outputs.data.cpu().numpy().squeeze()
         restored_mask = zoom(outputs, (ori_height / 224, ori_width / 224), order=0)
         restored_mask = np.clip(restored_mask, 0, 2)
-        
-        restored_mask = post_process_seg(restored_mask.astype(np.uint8))
+        restored_mask = cv2.medianBlur(restored_mask.astype(np.uint8), 3)
 
+        #restored_mask = post_process_seg(restored_mask.astype(np.uint8))
         seg_image = restored_mask.copy()
         original_image = gray_to_rgb(bvr_image.copy())
         #plt.imshow(original_image)
@@ -246,8 +238,10 @@ class MetricsDetector(object):
         #result["brain above ventricles"] = [(pos_y, pos_x), (pos_y, head_x)]
         #plt.plot([pos_y, pos_y], [pos_x, head_x],  marker = 'o', color = 'b', markersize = 1)
         result = {}
-        result["zEI"] = {"data":zEI, "line_1":[[pos_y, pos_x], [pos_y, max_x]], "line_2":[[mid_line, head_height_indexes.max()], [mid_line, head_height_indexes.min()]], "image":bvr_image}
-        result["BVR"] = {"data":BVR, "line_1":[[pos_y, pos_x], [pos_y, max_x]], "line_2":[[pos_y, pos_x], [pos_y, max_x]], "image":bvr_image}
+        result["zEI"] = {"data":zEI, "line_1": np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist(), 
+            "line_2":np.round([[mid_line, head_height_indexes.max()], [mid_line, head_height_indexes.min()]]).astype(np.int16).tolist()}
+        result["BVR"] = {"data":BVR, "line_1":np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist(), 
+                         "line_2":np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist()}
         #print(f"zEI: {centroid_height} mm / {head_height} mm = {zEI} \n BVR: {head_gap} mm / {centroid_height} mm = {BVR}")
 
-        return result
+        return result, bvr_image

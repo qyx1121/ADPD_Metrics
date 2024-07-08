@@ -50,13 +50,20 @@ def main(args):
 
         acpc_slices = rotate(acpc_slices, angle = -90, axes=(1, 2))
 
-        bvr_result = metrics_detector.det_bvr_zei(acpc_slices[0], mid_line)
-        ca_result = metrics_detector.det_ca(acpc_slices[1])
-        ei_result = metrics_detector.det_evans(image)
+        bvr_result, bvr_zei_image = metrics_detector.det_bvr_zei(acpc_slices[0], mid_line)
+        ca_result, ca_image = metrics_detector.det_ca(acpc_slices[1])
+        ei_result, ei_image = metrics_detector.det_evans(image)
     
         image_name = osp.basename(dcm_p)
         result = {"BVR":bvr_result["BVR"], "zEI": bvr_result["zEI"], "CA":ca_result, "EI":ei_result}
-        json.dump(result, osp.join(args.path_predictions, image_name + ".json"))
+
+        save_dir = osp.join(args.save_dir, image_name)
+        os.makedirs(save_dir, exist_ok=True)
+        json.dump(result, open(osp.join(save_dir, "results.json"), "w"))
+        plt.imsave(osp.join(save_dir, "bvr_zei_image.png"), bvr_zei_image, cmap="gray")
+        plt.imsave(osp.join(save_dir, "ca_image.png"), ca_image, cmap="gray")
+        plt.imsave(osp.join(save_dir, "ei_image.png"), ei_image, cmap="gray")
+
 
 
 if __name__ == "__main__":
@@ -64,10 +71,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dicom_dir", type=str, default="dicoms",
                         help="the input directory of dicom files")
-    parser.add_argument("--path_predictions", type=str, default="results",
-                        help="path where to save the measurement results")
+    parser.add_argument("--save_dir", type=str, default="results",
+                        help="directory where to save the measurement results")
     parser.add_argument("--gpu", action="store_true", help="enforce running with CPU rather than GPU.")
     parser.add_argument("--model_dir", type=str, default="models", help="the directory where the models are stored")
-   
+
     args = parser.parse_args()
     main(args)
