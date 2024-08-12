@@ -1,20 +1,22 @@
 from typing import Any
 from utils import *
 
+from sklearn.linear_model import LinearRegression
+
 
 class MetricsDetector(object):
-    def __init__(self, args):
+    def __init__(self, args, model_name):
         self.res_processor = get_resnet_processor(order=3)
         self.unet_processor = get_unet_processor()
         provider = 'CUDAExecutionProvider' if args.gpu else 'CPUExecutionProvider'
 
-        self.bvr_seg = ort.InferenceSession(osp.join(args.model_dir, "bvr_seg.onnx"), providers=[provider])
-        self.ca_seg = ort.InferenceSession(osp.join(args.model_dir, "ca_seg.onnx"), providers=[provider])
+        self.bvr_seg = ort.InferenceSession(osp.join(args.model_dir, f"bvr_256_{model_name}.onnx"), providers=[provider])
+        self.ca_seg = ort.InferenceSession(osp.join(args.model_dir, f"ca_{model_name}.onnx"), providers=[provider])
 
         self.judge_evans = ort.InferenceSession(osp.join(args.model_dir, "judge_evans.onnx"), providers=[provider])
-        self.evans_seg = ort.InferenceSession(osp.join(args.model_dir, "evans_seg.onnx"), providers=[provider])
+        self.evans_seg = ort.InferenceSession(osp.join(args.model_dir, f"evans_{model_name}.onnx"), providers=[provider])
  
-    def det_evans(self, ei_image):
+    def det_evans(self, ei_image, image_size):
         
         result = {}
         ### detect proper evans slices ###
@@ -33,14 +35,17 @@ class MetricsDetector(object):
 
         ### detect evans ###
         _, ori_height, ori_width = zEvans_image.shape
-        process_zEvans_image = torch.stack([self.unet_processor(zEvans_image[i]) for i in range(len(zEvans_image))])
+        for i in range(_):
+            zEvans_image[i] = cv2.cvtColor(gray_to_rgb(zEvans_image[i]), cv2.COLOR_RGB2GRAY)
+    
+        process_zEvans_image = torch.stack([get_unet_processor(image_size)(zEvans_image[i]) for i in range(len(zEvans_image))])
 
         outputs = np.array([self.evans_seg.run(None, {"input": process_zEvans_image[i:i+1].numpy()})[0] for i in range(len(process_zEvans_image))])
         outputs = torch.tensor(outputs).squeeze()
         outputs = torch.argmax(torch.softmax(outputs, dim=1), dim=1)
         outputs = outputs.data.cpu().numpy()
 
-        restored_mask = zoom(outputs, (1, ori_height / 224, ori_width / 224), order=0)
+        restored_mask = zoom(outputs, (1, ori_height / image_size, ori_width / image_size), order=0)
         restored_mask = np.clip(restored_mask, 0, 2)
         restored_mask = restored_mask.astype(np.uint8)
 
@@ -115,16 +120,129 @@ class MetricsDetector(object):
         result["line_2"] = np.round([[c_maxw, c_maxh], [c_minw, c_minh]]).astype(np.int16).tolist()
         return result, np.rot90(candidates[max_center_id], -1)
 
-    def det_ca(self, ca_image):
+    def tange_CA(self, px, py, ca_image):
 
+        # coefficients = np.polyfit(np.array(py), np.array(px), 5)
+        # func = np.poly1d(coefficients)
+
+        lb, hb = int(0.2 * len(px)), int(0.8 * len(px))
+        px, py = px[lb:hb], py[lb:hb]
+        
+        max_index = int(np.mean(np.where(px == np.max(px))[0]))
+        
+        left_xs, right_xs = px[:max_index+1], px[max_index:]
+        left_ys, right_ys = np.array(py[:max_index+1]), np.array(py[max_index:])
+
+        x_max, y_max = px[max_index], py[max_index]
+
+        # find left max tan 
+        max_degree = 0
+        left_ymin, left_xmin = 0, 0
+        for i in range(len(left_ys)):
+            if y_max == left_ys[i]:
+                continue
+            tan = (x_max - left_xs[i]) / (y_max - left_ys[i])
+            if tan > max_degree:
+                max_degree = tan
+                left_ymin, left_xmin = left_ys[i], left_xs[i]
+        
+        max_degree = 0
+        right_ymin, right_xmin = 0, 0
+        for i in range(len(right_ys)):
+            if y_max == right_ys[i]:
+                continue
+            tan = (x_max - right_xs[i]) / (right_ys[i] - y_max)
+            if tan > max_degree:
+                max_degree = tan
+                right_ymin, right_xmin = right_ys[i], right_xs[i]
+        
+        return left_ymin, left_xmin, y_max, x_max, right_ymin, right_xmin
+    
+    def fit_CA(self, px, py):
+        lb, hb = int(len(px) * 0.2), int(len(px) * 0.8)
+        px,py = px[lb:hb], py[lb:hb]
+        #max_index = int(np.mean(np.where(px == np.max(px))[0]))
+        #left_xs, right_xs = px[:max_index], px[max_index+1:]
+        #left_ys, right_ys = np.array(py[:max_index]), np.array(py[max_index+1:])
+
+        max_index_left, max_index_right = np.min(np.where(px == np.max(px))[0]), np.max(np.where(px == np.max(px))[0])
+        left_xs, right_xs = px[:max_index_left + 1], px[max_index_right:]
+        left_ys, right_ys = np.array(py[:max_index_left + 1]), np.array(py[max_index_right:])
+
+        left_model, right_model = LinearRegression(), LinearRegression()
+
+        left_xs, right_xs = np.expand_dims(left_xs, axis=1), np.expand_dims(right_xs, axis=1)
+        left_ys, right_ys = np.expand_dims(left_ys, axis=1), np.expand_dims(right_ys, axis=1)
+
+        left_model.fit(left_ys, left_xs)
+        pred_left_xs = left_model.predict(left_ys)
+
+        right_model.fit(right_ys, right_xs)
+        pred_right_xs = right_model.predict(right_ys)
+
+        x_max = sum(pred_left_xs[-1], pred_right_xs[0]) / 2
+        y_max = (left_ys[-1] + right_ys[0]) / 2
+        if pred_left_xs[-1] < pred_right_xs[0]:
+            diff_right = pred_right_xs[0] - x_max 
+            right_xmin = pred_right_xs[-1] - diff_right
+            diff_left = x_max - pred_left_xs[-1]
+            left_xmin = pred_left_xs[0] + diff_left
+        else:
+            diff_left = pred_left_xs[-1] - x_max 
+            left_xmin = pred_left_xs[0] - diff_left
+            diff_right = x_max - pred_right_xs[0]
+            right_xmin = pred_right_xs[-1] + diff_right
+
+        diff_right = right_ys[0] - y_max
+        diff_left = y_max - left_ys[-1]
+        left_ymin, right_ymin = left_ys[0], right_ys[-1]
+        left_ymin = left_ymin + diff_left
+        right_ymin = right_ymin - diff_right
+
+        return list(map(int, [left_ymin.item(), left_xmin.item(), y_max.item(), \
+                x_max.item(), right_ymin.item(), right_xmin.item()]))
+
+    def minmax_CA(self, px, py):
+        px = np.array(px)
+        tmp = deepcopy(px)
+        max_px = np.max(px)
+        px[px==max_px] += 2
+        tmp[tmp==max_px] = 0
+        px[px==np.max(tmp)] += 1
+
+        coefficients = np.polyfit(np.array(py), np.array(px), 4)
+        p = np.poly1d(coefficients)
+
+        l_b, h_b = int(len(py) * 0.2), int(len(py) * 0.8)
+        py = py[l_b:h_b]
+        p_fit = p(py)
+        
+        max_index = int(np.mean(np.where(p_fit == np.max(p_fit))[0]))
+        x_max = p_fit[max_index]
+        y_max = py[max_index]
+    
+        left_xmin, right_xmin = np.min(p_fit[:max_index+1]), np.min(p_fit[max_index:])
+        left_index = np.where(p_fit[:max_index+1] == left_xmin)[0].mean()
+        left_ymin = py[:max_index+1][int(left_index)]
+
+        right_index = np.where(p_fit[max_index:] == right_xmin)[0].mean()
+        right_ymin = py[max_index:][int(right_index)]
+
+        return left_ymin, left_xmin, y_max, x_max, right_ymin, right_xmin
+    
+    def det_ca(self, ca_image, image_size = 224):
+        
         result = {}
+        # plt.imsave("tmp/tmp.png", ca_image, cmap="gray")
+        # ca_image = cv2.imread
         ori_height, ori_width = ca_image.shape
-        images = self.unet_processor(ca_image)
+        ca_image = cv2.cvtColor(gray_to_rgb(ca_image), cv2.COLOR_RGB2GRAY)
+        images = get_unet_processor(image_size)(ca_image)
         _, new_height, new_width = images.shape
         outputs = self.ca_seg.run(None, {"input": images.unsqueeze(0).numpy()})[0]
         outputs = torch.argmax(torch.softmax(torch.tensor(outputs), dim=1), dim=1)
         outputs = outputs.data.cpu().numpy().squeeze()
-        restored_mask = zoom(outputs, (ori_height / 224, ori_width / 224), order=0)
+        restored_mask = zoom(outputs, (ori_height / new_height, ori_width / new_width), order=0)
         restored_mask = np.clip(restored_mask, 0, 2)
         restored_mask[restored_mask == 2] = 0
         restored_mask = restored_mask.astype(np.uint8)
@@ -143,22 +261,11 @@ class MetricsDetector(object):
                 px.append(x_tmp.min())
                 py.append(y)
 
-        coefficients = np.polyfit(np.array(py), np.array(px), 4)
-        p = np.poly1d(coefficients)
-
-        l_b, h_b = int(len(py) * 0.15), int(len(py) * 0.85)
-        py = py[l_b:h_b]
-        p_fit = p(py)
-
-        x_max, max_index = np.max(p_fit), np.argmax(p_fit)
-        y_max = py[max_index]
-        left_xmin, right_xmin = np.min(p_fit[:max_index]), np.min(p_fit[max_index:])
-        left_index = np.where(p_fit[:max_index] == left_xmin)[0].mean()
-        left_ymin = py[:max_index][int(left_index)]
-
-        right_index = np.where(p_fit[max_index:] == right_xmin)[0].mean()
-        right_ymin = py[max_index:][int(right_index)]
-
+        '''------最高最低点-------'''
+        #left_ymin, left_xmin, y_max, x_max, right_ymin, right_xmin = self.tange_CA(px, py, ca_image)
+        left_ymin, left_xmin, y_max, x_max, right_ymin, right_xmin = self.fit_CA(px, py)
+        #left_ymin, left_xmin, y_max, x_max, right_ymin, right_xmin = self.minmax_CA(px, py)
+        '''------最高最低点-------'''
         A, B, C = np.array([left_ymin, left_xmin]), np.array([y_max, x_max]), np.array([right_ymin, right_xmin])
         BA, BC = A - B, C - B
         dot_product = np.dot(BA, BC)
@@ -177,15 +284,16 @@ class MetricsDetector(object):
        #plt.plot([left_ymin, y_max, right_ymin], [left_xmin, x_max, right_xmin])
         return result, ca_image
 
-    def det_bvr_zei(self, bvr_image, mid_line):
+    def det_bvr_zei(self, bvr_image, mid_line, image_size):
         #result = {"skull height":[], "lateral ventricles height":[], "brain above ventricles":[]}
 
         ori_height, ori_width  = bvr_image.shape
-        outputs = self.bvr_seg.run(None, {"input": self.unet_processor(bvr_image).unsqueeze(0).numpy()})[0]
+        bvr_image = cv2.cvtColor(gray_to_rgb(bvr_image), cv2.COLOR_RGB2GRAY)
+        outputs = self.bvr_seg.run(None, {"input": get_unet_processor(image_size)(bvr_image).unsqueeze(0).numpy()})[0]
 
         outputs = torch.argmax(torch.softmax(torch.tensor(outputs), dim=1), dim=1)
         outputs = outputs.data.cpu().numpy().squeeze()
-        restored_mask = zoom(outputs, (ori_height / 224, ori_width / 224), order=0)
+        restored_mask = zoom(outputs, (ori_height / image_size, ori_width / image_size), order=0)
         restored_mask = np.clip(restored_mask, 0, 2)
         restored_mask = cv2.medianBlur(restored_mask.astype(np.uint8), 3)
 

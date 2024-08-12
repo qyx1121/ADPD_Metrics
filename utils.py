@@ -128,7 +128,6 @@ def normalize(original_image):
     resampler.SetTransform(sitk.Transform())
     resampler.SetDefaultPixelValue(original_image.GetPixelIDValue())
 
-  
     resampler.SetInterpolator(sitk.sitkLinear)
 
     resampled_image = resampler.Execute(original_image)
@@ -228,19 +227,28 @@ def calculate_midline(masks, threshold = None):
     Q1 = np.percentile(slopes, 25)
     Q3 = np.percentile(slopes, 75)
     IQR = Q3 - Q1
-    normal_points = slopes[((slopes > (Q1 - 1.5 * IQR)) & (slopes < (Q3 + 1.5 * IQR)))]
 
+    normal_slopes_index = ((slopes > (Q1 - 1.5 * IQR)) & (slopes < (Q3 + 1.5 * IQR)))
+
+    intercepts = np.array(intercepts)
+    Q1 = np.percentile(intercepts, 25)
+    Q3 = np.percentile(intercepts, 75)
+    IQR = Q3 - Q1
+    normal_intercepts_index = ((intercepts > (Q1 - 1.5 * IQR)) & (intercepts < (Q3 + 1.5 * IQR)))
+
+    normal_index = np.bitwise_and(normal_slopes_index, normal_intercepts_index)
+    normal_slopes, normal_intercepts = slopes[normal_index], intercepts[normal_index]
     ## 将剩余的正常值取平均，计算偏移角
-    slope = np.mean(normal_points)
+    slope = np.mean(normal_slopes)
     angle = math.atan(slope) * 180 / math.pi
     print("The offset angle is {:.2f}°".format(angle))
 
-    intercept = intercepts[np.argmin(np.abs(slopes - slope))]
+    intercept = normal_intercepts[np.argmin(np.abs(normal_slopes - slope))]
 
     return slope, intercept, angle
 
 
-def segmentation(slices, ori_images, model):
+def segmentation(slices, ori_images, model, image_size = 224):
     restored_mask = []
     for i in range(len(slices)):
         sli = slices[i].unsqueeze(0).numpy()
@@ -251,7 +259,7 @@ def segmentation(slices, ori_images, model):
 
         x, y = ori_images[0].shape
         ### 将得到的mask恢复到原始尺度
-        mask = zoom(outputs, (x / 224, y / 224), order=1)
+        mask = zoom(outputs, (x / image_size, y / image_size), order=1)
         mask = np.clip(mask, 0, 2)
         restored_mask.append(mask)
     restored_mask = np.stack(restored_mask)
@@ -281,7 +289,7 @@ def adjust_z(args, image):
     high_bound = int(bound * 0.8)
 
     miss_low_bound, miss_high_bound = int(bound * 0.4), int(bound * 0.6)
-
+    
     slices = torch.stack([preprocess(image[:, :, i]) for i in range(low_bound, high_bound, 3) if i <= miss_low_bound or i >= miss_high_bound])
     ori_images = [image[:, :, i] for i in range(low_bound, high_bound, 3) if i <= miss_low_bound or i >= miss_high_bound]
     masks = segmentation(slices, ori_images, model)
