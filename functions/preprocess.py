@@ -34,27 +34,27 @@ class Register(object):
         elif zero_pos == 2:
             image = image.transpose(2, 0, 1)
 
-        return image
+        return image, two_pos
 
         
 class HeadMove(object):
-    def __init__(self, args):
+    def __init__(self, args, model_name):
         provider = 'CUDAExecutionProvider' if args.gpu else 'CPUExecutionProvider'
-        self.seg_z_model = ort.InferenceSession(osp.join(args.model_dir, "brain_seg_z.onnx"), providers=[provider])
-        self.seg_y_model = ort.InferenceSession(osp.join(args.model_dir, "brain_seg_y.onnx"), providers=[provider])
+        self.seg_z_model = ort.InferenceSession(osp.join(args.model_dir, f"seg_z_{model_name}.onnx"), providers=[provider])
+        self.seg_y_model = ort.InferenceSession(osp.join(args.model_dir, f"seg_y_{model_name}.onnx"), providers=[provider])
         self.unet_processor = get_unet_processor()
         self.res_processor = get_resnet_processor(order = 3)
 
         self.judge_segy = ort.InferenceSession(osp.join(args.model_dir, "judge_segy.onnx"), providers=[provider])
 
 
-    def __call__(self, image):
-        image_z = self.adjust_z(image)
-        image_y, mid_line = self.adjust_y(image_z)
+    def __call__(self, image, seg_image_size):
+        image_z = self.adjust_z(image, seg_image_size)
+        image_y, mid_line = self.adjust_y(image_z, seg_image_size)
 
         return image_y, mid_line
     
-    def adjust_y(self, image):
+    def adjust_y(self, image, image_size):
         x, y, z = image.shape
         y_images = [self.res_processor(gray_to_rgb(image[:, i, :])) for i in range(0, y, 3)]
         ori_y_images = np.stack([image[:, i, :] for i in range(0, y, 3)])
@@ -63,8 +63,10 @@ class HeadMove(object):
         logits = self.judge_segy.run(None, {'input':y_images.numpy()})[0]
         positive_indexes = np.argmax(logits, axis = 1)
         ori_images = ori_y_images[positive_indexes == 1][::2]
-        slices = torch.stack([self.unet_processor(ori_images[i]) for i in range(len(ori_images))])
-        masks = segmentation(slices, ori_images, self.seg_y_model)
+        for i in range(len(ori_images)):
+            ori_images[i] = cv2.cvtColor(gray_to_rgb(ori_images[i]), cv2.COLOR_RGB2GRAY)
+        slices = torch.stack([get_unet_processor(image_size)(ori_images[i]) for i in range(len(ori_images))])
+        masks = segmentation(slices, ori_images, self.seg_y_model, image_size)
         slope, intercept, angle = calculate_midline(masks, 0.5)
         x_plot = np.arange(0, image.shape[-1])
         y_plot = slope * x_plot + intercept
@@ -79,14 +81,16 @@ class HeadMove(object):
 
         return adjusted_image, y
 
-    def adjust_z(self, image):
+    def adjust_z(self, image, image_size):
         bound = image.shape[-1]
         low_bound, high_bound = int(bound * 0.4), int(bound * 0.6)
         
         ori_images = [image[:, :, i] for i in range(int(bound * 0.2), low_bound, 3)]
         ori_images += [image[:, :, i] for i in range(high_bound, int(bound * 0.8), 3)]
-        slices = torch.stack([self.unet_processor(ori_images[i]) for i in range(len(ori_images))])
-        masks = segmentation(slices, ori_images, self.seg_z_model)
+        for i in range(len(ori_images)):
+            ori_images[i] = cv2.cvtColor(gray_to_rgb(ori_images[i]), cv2.COLOR_RGB2GRAY)
+        slices = torch.stack([get_unet_processor(image_size)(ori_images[i]) for i in range(len(ori_images))])
+        masks = segmentation(slices, ori_images, self.seg_z_model, image_size)
         slope, intercept, angle = calculate_midline(masks, 0.5)
         adjusted_image = rotate(image, angle=angle, axes=(0,1), reshape=False, mode="constant", cval=0.0)
         return adjusted_image

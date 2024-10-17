@@ -2,10 +2,6 @@
 
 本仓库主要用于zEvans, Evans, BVR, CA四个指标测量，目前模型仍在进一步优化中......
 
-## TODO
-- [ ] 分割模型持续优化
-- [ ] CA角度测量方法改进
-- [ ] 识别测量Evans指数的横断面的模型有待进一步优化
 
 ## 环境搭建
 本项目基于Python环境，运行下述命令安装所需python库
@@ -13,7 +9,7 @@
 pip install -r requirements.txt
 ```
 ## 模型准备
-模型文件地址：[Google Drive](https://drive.google.com/drive/folders/1KyrTW64qj_ZCg0NHJJafLGa6cvdNWoIv?usp=drive_link)
+模型文件地址：[Google Drive](https://drive.google.com/drive/folders/1N9P1AwID9gjnYEV6BL6vJR42SutRiMy7?usp=drive_link)
 
 ## 数据准备
 将dicom格式的数据组织成如下形式：
@@ -47,42 +43,20 @@ python main.py \
 ```
 
 ## 输出结果
-模型的输出结果讲保存在指定的save_dir中，每个dicom文件的测量结果会产生三个文件
+输出以下内容：
 ```
 ├── save_dir
 │   ├── dicom_1
-│   │   ├── bvr_zei_image.png
-│   │   ├── ca_image.png
-│   │   ├── ei_image.png
+│   │   ├── norm_image.nii
+│   │   ├── registered_image.nii
+│   │   ├── acpc_image.nii
 │   │   ├── results.json
-│   ├── dicom_2
-│   │   ├── bvr_zei_image.png
-│   │   ├── ca_image.png
-│   │   ├── ...
 ```
-其中“bvr_zei_image.png”， "ca_image.png"以及"ei_image.png"分别为各指标所测量的截面。
+模型的输出结果讲保存在指定的save_dir中，生成的results.json文件包含了各指标的测量层面、测量值以及具体的测量点（方便可视化）.
+在运行过程中，会保存3个nii文件：
+1. norm_image.nii为将体素大小标准化为1mm x 1mm x 1mm后的图像；
+2. registered_image.nii位将图像经过头动校正后的图像；
+3. acpc_image.nii为根据找到的ac和pc点，将ac、pc点置为同一水平线后的图像。
+后续所有指标的测量过程均是基于acpc_image.nii图像进行测量。
 
-results.json的结构如下：
-```
-{
-    "BVR": {
-        "data": 0.8461538461538461, # BVR指数
-        "line_1": [[111, 52], [111, 91]], # 表示侧脑室高度的两点
-        "line_2": [[111, 52], [111, 19]]  # 表示侧脑室最高点到颅骨的两点
-        },
-    "zEI": {
-        "data": 0.3482142857142857, # zEvans指数
-        "line_1": [[111, 52], [111, 91]], # 表示侧脑室高度的两点
-        "line_2": [[125, 131], [125, 19]] # 表示颅内高度的两点
-        },
-    "CA": {
-        "data": 130.57901252510226, # CA指数
-        "points": [[114, 51], [131, 58], [150, 48]] # 用于测量CA角度的三个点，左端点，中心点以及右端点
-    },
-    "EI": {
-        "data": 0.35428571428571426, # Evans指数
-        "line_1": [[205, 217], [30, 217]], # 颅骨内板最大宽度的两点
-        "line_2": [[159, 106], [97, 106]]  # 侧脑室前角最大宽度的两点
-    }
-}
-```
+

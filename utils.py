@@ -19,7 +19,6 @@ from sklearn.preprocessing import MinMaxScaler
 import math
 import copy
 from copy import deepcopy
-import sys
 
 def visualize_masks(image, mask):
 
@@ -78,9 +77,6 @@ def visualize(image):
     plt.tight_layout()
     plt.show()
 
-
-
-
 def get_unet_processor(image_size = 224):
     def preprocess(image):
         x, y = image.shape
@@ -128,7 +124,6 @@ def normalize(original_image):
     resampler.SetTransform(sitk.Transform())
     resampler.SetDefaultPixelValue(original_image.GetPixelIDValue())
 
-  
     resampler.SetInterpolator(sitk.sitkLinear)
 
     resampled_image = resampler.Execute(original_image)
@@ -228,19 +223,28 @@ def calculate_midline(masks, threshold = None):
     Q1 = np.percentile(slopes, 25)
     Q3 = np.percentile(slopes, 75)
     IQR = Q3 - Q1
-    normal_points = slopes[((slopes > (Q1 - 1.5 * IQR)) & (slopes < (Q3 + 1.5 * IQR)))]
 
+    normal_slopes_index = ((slopes > (Q1 - 1.5 * IQR)) & (slopes < (Q3 + 1.5 * IQR)))
+
+    intercepts = np.array(intercepts)
+    Q1 = np.percentile(intercepts, 25)
+    Q3 = np.percentile(intercepts, 75)
+    IQR = Q3 - Q1
+    normal_intercepts_index = ((intercepts > (Q1 - 1.5 * IQR)) & (intercepts < (Q3 + 1.5 * IQR)))
+
+    normal_index = np.bitwise_and(normal_slopes_index, normal_intercepts_index)
+    normal_slopes, normal_intercepts = slopes[normal_index], intercepts[normal_index]
     ## 将剩余的正常值取平均，计算偏移角
-    slope = np.mean(normal_points)
+    slope = np.mean(normal_slopes)
     angle = math.atan(slope) * 180 / math.pi
     print("The offset angle is {:.2f}°".format(angle))
 
-    intercept = intercepts[np.argmin(np.abs(slopes - slope))]
+    intercept = normal_intercepts[np.argmin(np.abs(normal_slopes - slope))]
 
     return slope, intercept, angle
 
 
-def segmentation(slices, ori_images, model):
+def segmentation(slices, ori_images, model, image_size = 224):
     restored_mask = []
     for i in range(len(slices)):
         sli = slices[i].unsqueeze(0).numpy()
@@ -251,7 +255,7 @@ def segmentation(slices, ori_images, model):
 
         x, y = ori_images[0].shape
         ### 将得到的mask恢复到原始尺度
-        mask = zoom(outputs, (x / 224, y / 224), order=1)
+        mask = zoom(outputs, (x / image_size, y / image_size), order=1)
         mask = np.clip(mask, 0, 2)
         restored_mask.append(mask)
     restored_mask = np.stack(restored_mask)
@@ -281,19 +285,10 @@ def adjust_z(args, image):
     high_bound = int(bound * 0.8)
 
     miss_low_bound, miss_high_bound = int(bound * 0.4), int(bound * 0.6)
-
+    
     slices = torch.stack([preprocess(image[:, :, i]) for i in range(low_bound, high_bound, 3) if i <= miss_low_bound or i >= miss_high_bound])
     ori_images = [image[:, :, i] for i in range(low_bound, high_bound, 3) if i <= miss_low_bound or i >= miss_high_bound]
     masks = segmentation(slices, ori_images, model)
-    # interval = len(masks) // 5
-    # vis_images = []
-    # i = 0
-    # while i < len(masks):
-    #     vis_images.append(visualize_masks(ori_images[i], masks[i]))
-    #     i+= interval
-
-    # visualize_multiple_images(vis_images)
-
     slope, intercept, angle = calculate_midline(masks, 0.5)
     adjusted_image = rotate(image, angle=angle, axes=(0,1), reshape=False, mode="constant", cval=0.0)
     return adjusted_image
@@ -381,22 +376,11 @@ def postprocess_convert_points(points, new_size, ori_size):
 def find_acpc_line(args, images):
     provider = 'CUDAExecutionProvider' if args.gpu else 'CPUExecutionProvider'
     model = ort.InferenceSession(osp.join(args.model_dir, "acpc_detector.onnx"), providers=[provider])
-    # RESNET_WEIGHTS = "/mnt/hdd1/qinyixin/huaxiproj/AC-PC/models/resnet-152"
-    # model = AcPc_FPN_Detector(RESNET_WEIGHTS)
-    # ckpt = torch.load("/home/qinyixin/workspace/Swin-Unet/AC_PC/AC_PC_ckpt/resnet-152_fpn_256_999.pth", map_location="cpu")
-    # new_ckpt = OrderedDict()
-    # for k, v in ckpt.items():
-    #     k = k.replace("module.", "")
-    #     new_ckpt[k] = v
-    # model.load_state_dict(new_ckpt)
-    # model = model.cuda()
-
     processor = get_resnet_processor(args.acpc_image_size, 3)
 
     ori_width, ori_height = images.shape[1], images.shape[2]
     pre_images = torch.stack([processor(gray_to_rgb(im)) for im in images])
     pred_points = model.run(None, {"input": pre_images.numpy()})[0]
-    #pred_points = model(pre_images.cuda()).cpu().detach().numpy()
     points = postprocess_convert_points(pred_points, (ori_width, ori_height), (args.acpc_image_size, args.acpc_image_size))
     
     ac_pt, pc_pt = points[:2], points[2:]

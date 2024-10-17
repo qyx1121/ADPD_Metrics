@@ -1,0 +1,10 @@
+matplotlib
+numpy
+onnxruntime
+opencv-python
+pillow
+scipy
+scikit-learn
+SimpleITK
+torch
+torchvision
