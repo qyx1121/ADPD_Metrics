@@ -52,14 +52,14 @@ def main(args):
         ### Find_AcPc ###
         acpc_slices = image[mid_line-2: mid_line+2, :, :]
         points = acpc_detector(acpc_slices)
-
+        ### 将AcPc点摆动到水平线 ###
         if points[0] > points[2]:
             image = np.flip(image, axis=2)
             width = image.shape[-1]
             points[0] = width - points[0]
             points[2] = width - points[2]
         image, new_points = adjust_acpc(points, image)
-        ### 将AcPc点摆动到水平线 ###
+        x, y, z = image.shape
         acpc_image = rotate(image, 90, axes = (0, 1))
         acpc_image = sitk.GetImageFromArray(acpc_image)
         sitk.WriteImage(acpc_image, osp.join(save_dir, "acpc_image.nii"))
@@ -68,18 +68,18 @@ def main(args):
         pc_slice = image[:, :, new_points[2]]
         res["ACPC"] = {
             "acpc层": mid_line, 
-            "ac_points": new_points[:2], 
-            "pc_points": new_points[2:]
+            "ac_points": [new_points[0], y - new_points[1] - 1], 
+            "pc_points": [new_points[2], y - new_points[3] - 1]
             }
 
         res["BVR"] = {
-            "BVR层（矢状位）": new_points[0]
+            "BVR层（冠状位）": new_points[0]
         }
         res["zEvans"] = {
-            "zEvans层（矢状位）": new_points[0]
+            "zEvans层（冠状位）": new_points[0]
         }
         res["CA"] = {
-            "CA层（矢状位）": new_points[2]
+            "CA层（冠状位）": new_points[2]
         }
         acpc_slices = np.stack([ac_slice, pc_slice])
 
@@ -90,14 +90,15 @@ def main(args):
         res['BVR']['测量值'] = round(bvr_result['BVR']['data'].item(), 3)
         bvr_line1 = bvr_result['BVR']['line_1']
         bvr_line2 = bvr_result['BVR']['line_2']
+        x, y = bvr_zei_image.shape
         res['BVR']['侧脑室正高度'] = {
-            "point_1": bvr_line1[0], 
-            "point_2": bvr_line1[1],
+            "point_1": [bvr_line1[0][0], x - bvr_line1[0][1] - 1], 
+            "point_2": [bvr_line1[1][0], x - bvr_line1[1][1] - 1],
             "长度": f"{abs(bvr_line1[0][1] - bvr_line1[1][1])}mm"
             }
         res['BVR']['侧脑室正上方颅内高度'] = {
-            "point_1": bvr_line2[0], 
-            "point_2": bvr_line2[1],
+            "point_1": [bvr_line2[0][0], x - bvr_line2[0][1] - 1], 
+            "point_2": [bvr_line2[1][0], x - bvr_line2[1][1] - 1],
             "长度": f"{abs(bvr_line2[0][1] - bvr_line2[1][1])}mm"
             }
         
@@ -105,35 +106,37 @@ def main(args):
         zei_line1 = bvr_result['zEI']['line_1']
         zei_line2 = bvr_result['zEI']['line_2']
         res['zEvans']['侧脑室高度'] = {
-            "point_1": zei_line1[0],
-            "point_2": zei_line1[1],
+            "point_1": [zei_line1[0][0], x - zei_line1[0][1] - 1],
+            "point_2": [zei_line1[1][0], x - zei_line1[1][1] - 1],
             "长度": f"{abs(zei_line1[0][1] - zei_line1[1][1])}mm"
         }
         res['zEvans']['颅内最大高度'] = {
-            "point_1": zei_line2[0],
-            "point_2": zei_line2[1],
-            "长度": f"{abs(zei_line2[0][1] - zei_line2[1][1])}"
+            "point_1": [zei_line2[0][0], x - zei_line2[0][1] - 1],
+            "point_2": [zei_line2[1][0], x - zei_line2[1][1] - 1],
+            "长度": f"{abs(zei_line2[0][1] - zei_line2[1][1])}mm"
         }
 
         ### 检测CA指数 ###
         ca_image = acpc_slices[1]
         ca_result, ca_image = metrics_detector.det_ca(ca_image, image_size = seg_image_size)
         res['CA']['测量值'] = round(ca_result['data'].item(), 3)
-        res['CA']['point_left'], res['CA']['point_middle'], res['CA']['point_right'] = ca_result['points']
+        ca_result_points = [[i[0], x - i[1] - 1] for i in ca_result['points']]
+        res['CA']['point_left'], res['CA']['point_middle'], res['CA']['point_right'] = ca_result_points
 
         ### 检测Evans指数 ###
+        x, y, z = image.shape
         ei_result, ei_image, ei_layer_id = metrics_detector.det_evans(image, image_size = seg_image_size)
         res['Evans'] = {}
-        res['Evans']['Evans层（横断位）'] = ei_layer_id
+        res['Evans']['Evans层（横断位）'] = y - ei_layer_id - 1
         res['Evans']['测量值'] = round(ei_result['data'].item())
         res['Evans']['侧脑室前角最大间距'] = {
-            "point_1": ei_result['line_2'][0],
-            "point_2": ei_result['line_2'][1],
+            "point_1": [ei_result['line_2'][0][0], ei_result['line_2'][0][1]],
+            "point_2": [ei_result['line_2'][1][0], ei_result['line_2'][1][1]],
             "长度": f"{abs(ei_result['line_2'][0][0] - ei_result['line_2'][1][0])}mm"
         }
         res['Evans']['颅内最大间距'] = {
-            "point_1": ei_result['line_1'][0],
-            "point_2": ei_result['line_1'][1],
+            "point_1": [ei_result['line_1'][0][0], ei_result['line_1'][0][1]],
+            "point_2": [ei_result['line_1'][1][0], ei_result['line_1'][1][1]],
             "长度": f"{abs(ei_result['line_1'][0][0] - ei_result['line_1'][1][0])}mm"
         }
         json.dump(res, open(osp.join(save_dir, "results.json"), "w"), indent = 2, ensure_ascii=False)

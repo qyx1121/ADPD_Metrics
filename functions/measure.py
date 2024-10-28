@@ -80,7 +80,6 @@ class MetricsDetector(object):
                     c_minw, c_maxw = tmp_row.min(), tmp_row.max()
                     c_minh = c_maxh = x
                     max_center_id = i
-        
         layer_id = np.where(positive_indexes == 1)[0][max_center_id].item() + low_bound
 
         ei_image = np.rot90(candidates[max_center_id], -1)
