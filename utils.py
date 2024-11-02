@@ -424,7 +424,7 @@ def adjust_acpc(points, image):
     visual_image = copy.deepcopy(image[image.shape[0] // 2, :, :])
     cv2.circle(visual_image, (new_points[0], new_points[1]), 2, (255, 255, 255), -1)
     cv2.circle(visual_image, (new_points[2], new_points[3]), 2, (255, 255, 255), -1)
-    plt.imsave(f"tmp.png", visual_image, cmap="gray")
+    # plt.imsave(f"tmp.png", visual_image, cmap="gray")
 
     return image, new_points
 

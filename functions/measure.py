@@ -16,21 +16,28 @@ class MetricsDetector(object):
         self.judge_evans = ort.InferenceSession(osp.join(args.model_dir, "judge_evans.onnx"), providers=[provider])
         self.evans_seg = ort.InferenceSession(osp.join(args.model_dir, f"evans_{model_name}.onnx"), providers=[provider])
  
-    def det_evans(self, ei_image, image_size):
+    def det_evans(self, ei_image, image_size, res, layer_id = None):
+        r_x, r_y, r_z = ei_image.shape
+
+        if layer_id is None:
+            ### detect proper evans slices ###
+            x, y, z = ei_image.shape
+            low_bound, high_bound = int(0.3 * y), int(0.7 * y)
+            ori_y_images = ei_image[:, low_bound:high_bound, :]
+
+            y_images = [self.res_processor(gray_to_rgb(ori_y_images[:, i, :])) for i in range(ori_y_images.shape[1])]
+            ori_y_images = np.stack([ori_y_images[:, i, :] for i in range(ori_y_images.shape[1])])
+
+            y_images = torch.stack(y_images)
+            logits = self.judge_evans.run(None, {'input':y_images.numpy()})[0]
+            positive_indexes = np.argmax(logits, axis = 1)
+            candidates = ori_y_images[positive_indexes == 1]
+        else:
+            layer_id = r_y - layer_id - 1
+            positive_indexes = None
+            candidates = ei_image[:, layer_id:layer_id + 1, :]
+            candidates = candidates.transpose(1, 0, 2)
         
-        result = {}
-        ### detect proper evans slices ###
-        x, y, z = ei_image.shape
-        low_bound, high_bound = int(0.3 * y), int(0.7 * y)
-        ori_y_images = ei_image[:, low_bound:high_bound, :]
-
-        y_images = [self.res_processor(gray_to_rgb(ori_y_images[:, i, :])) for i in range(ori_y_images.shape[1])]
-        ori_y_images = np.stack([ori_y_images[:, i, :] for i in range(ori_y_images.shape[1])])
-
-        y_images = torch.stack(y_images)
-        logits = self.judge_evans.run(None, {'input':y_images.numpy()})[0]
-        positive_indexes = np.argmax(logits, axis = 1)
-        candidates = ori_y_images[positive_indexes == 1]
         zEvans_image = rotate(candidates, -90, axes = (1, 2))
 
         ### detect evans ###
@@ -42,6 +49,8 @@ class MetricsDetector(object):
 
         outputs = np.array([self.evans_seg.run(None, {"input": process_zEvans_image[i:i+1].numpy()})[0] for i in range(len(process_zEvans_image))])
         outputs = torch.tensor(outputs).squeeze()
+        if outputs.ndim == 3:
+            outputs = outputs.unsqueeze(0)
         outputs = torch.argmax(torch.softmax(outputs, dim=1), dim=1)
         outputs = outputs.data.cpu().numpy()
 
@@ -80,7 +89,8 @@ class MetricsDetector(object):
                     c_minw, c_maxw = tmp_row.min(), tmp_row.max()
                     c_minh = c_maxh = x
                     max_center_id = i
-        layer_id = np.where(positive_indexes == 1)[0][max_center_id].item() + low_bound
+        if positive_indexes is not None:
+            layer_id = np.where(positive_indexes == 1)[0][max_center_id].item() + low_bound
 
         ei_image = np.rot90(candidates[max_center_id], -1)
         ei_mask = restored_mask[max_center_id]  
@@ -117,10 +127,27 @@ class MetricsDetector(object):
         #plt.plot([c_maxw, c_minw], [c_maxh, c_minh],  marker = 'o', color = 'r', markersize = 1)
         #plt.plot([b_maxw, b_minw], [b_maxh, b_minh],  marker = 'o', color = 'r', markersize = 1)
         
-        result["data"] = max_center_length / max_boundary_length
-        result["line_1"] = np.round([[b_maxw, b_maxh], [b_minw, b_minh]]).astype(np.int16).tolist()
-        result["line_2"] = np.round([[c_maxw, c_maxh], [c_minw, c_minh]]).astype(np.int16).tolist()
-        return result, np.rot90(candidates[max_center_id], -1), layer_id
+        ei_image = np.rot90(candidates[max_center_id], -1)
+        w, h = ei_image.shape
+        
+        line1_result = np.round([[b_maxw, b_maxh], [b_minw, b_minh]]).astype(np.int16).tolist()
+        line2_result = np.round([[c_maxw, c_maxh], [c_minw, c_minh]]).astype(np.int16).tolist()
+        
+        
+        res['Evans']['Evans层（横断位）'] = r_y - layer_id - 1
+        res['Evans']['测量值'] = round(max_center_length / max_boundary_length, 3)
+        res['Evans']['侧脑室前角最大间距'] = {
+            "point_1": [line2_result[0][1], h - line2_result[0][0] - 1],
+            "point_2": [line2_result[1][1], h - line2_result[1][0] - 1],
+            "长度": f"{abs(line2_result[0][0] - line2_result[1][0])}mm"
+        }
+        res['Evans']['颅内最大间距'] = {
+            "point_1": [line1_result[0][1], h - line1_result[0][0] - 1],
+            "point_2": [line1_result[1][1], h - line1_result[1][0] - 1],
+            "长度": f"{abs(line1_result[0][0] - line1_result[1][0])}mm"
+        }
+        
+        return
 
     def tange_CA(self, px, py, ca_image):
 
@@ -232,11 +259,10 @@ class MetricsDetector(object):
 
         return left_ymin, left_xmin, y_max, x_max, right_ymin, right_xmin
     
-    def det_ca(self, ca_image, image_size = 224):
-        
-        result = {}
-        # plt.imsave("tmp/tmp.png", ca_image, cmap="gray")
-        # ca_image = cv2.imread
+    def det_ca(self, acpc_image, pc_layer_id, res, image_size = 224):
+        ca_image = acpc_image[:, :, pc_layer_id]
+        ca_image = rotate(ca_image, angle = -90, axes = (0,1))
+
         ori_height, ori_width = ca_image.shape
         ca_image = cv2.cvtColor(gray_to_rgb(ca_image), cv2.COLOR_RGB2GRAY)
         images = get_unet_processor(image_size)(ca_image)
@@ -278,17 +304,19 @@ class MetricsDetector(object):
         cos_theta = np.clip(cos_theta, -1, 1)
             
         theta_radians = np.arccos(cos_theta)
-            
         theta_degrees = np.degrees(theta_radians)
+        points = np.round([[left_ymin, left_xmin], [y_max, x_max], [right_ymin, right_xmin]]).astype(np.int16).tolist()
 
-        result["data"] = theta_degrees
-        result["points"] = np.round([[left_ymin, left_xmin], [y_max, x_max], [right_ymin, right_xmin]]).astype(np.int16).tolist()
-       #plt.plot([left_ymin, y_max, right_ymin], [left_xmin, x_max, right_xmin])
-        return result, ca_image
+        x, y = ca_image.shape
+        res['CA']['测量值'] = round(theta_degrees.item(), 3)
+        ca_result_points = [[y - i[0] - 1, x - i[1] - 1] for i in points]
+        res['CA']['point_right'], res['CA']['point_middle'], res['CA']['point_left'] = ca_result_points
+        return
 
-    def det_bvr_zei(self, bvr_image, mid_line, image_size):
-        #result = {"skull height":[], "lateral ventricles height":[], "brain above ventricles":[]}
-
+    def det_bvr_zei(self, acpc_image, ac_layer_id, mid_line, image_size, res):
+        bvr_image = acpc_image[:, :, ac_layer_id]
+        bvr_image = rotate(bvr_image, angle = -90, axes = (0, 1))
+        
         ori_height, ori_width  = bvr_image.shape
         bvr_image = cv2.cvtColor(gray_to_rgb(bvr_image), cv2.COLOR_RGB2GRAY)
         outputs = self.bvr_seg.run(None, {"input": get_unet_processor(image_size)(bvr_image).unsqueeze(0).numpy()})[0]
@@ -298,17 +326,13 @@ class MetricsDetector(object):
         restored_mask = zoom(outputs, (ori_height / image_size, ori_width / image_size), order=0)
         restored_mask = np.clip(restored_mask, 0, 2)
         restored_mask = cv2.medianBlur(restored_mask.astype(np.uint8), 3)
+        restored_mask = post_process_seg(restored_mask, 10)
 
-        #restored_mask = post_process_seg(restored_mask.astype(np.uint8))
         seg_image = restored_mask.copy()
         original_image = gray_to_rgb(bvr_image.copy())
-        #plt.imshow(original_image)
         ### for Highest line ###
         head_height_indexes = np.argwhere(seg_image[:, mid_line] == 2)
         head_height = head_height_indexes.max() - head_height_indexes.min()
-
-        #result["skull height"] = [(mid_line, head_height_indexes.max()), (mid_line, head_height_indexes.min())]
-        #plt.plot([mid_line, mid_line], [head_height_indexes.max(), head_height_indexes.min()],  marker = 'o', color = 'r', markersize = 1)
 
         centroid = np.argwhere(seg_image == 1)
         sorted_indices = np.argsort(centroid[:, 1])
@@ -335,8 +359,6 @@ class MetricsDetector(object):
             max_x = max_right_x
 
         centroid_height = max_x - pos_x
-        #result["lateral ventricles height"] = [(pos_y, pos_x), (pos_y, max_x)]
-        #plt.plot([pos_y, pos_y], [pos_x, max_x],  marker = 'o', color = 'y', markersize = 1)
 
         ### calculate zEI ###
         zEI = centroid_height / head_height
@@ -345,13 +367,33 @@ class MetricsDetector(object):
         head_gap = pos_x - head_x
         BVR = head_gap / centroid_height
 
-        #result["brain above ventricles"] = [(pos_y, pos_x), (pos_y, head_x)]
-        #plt.plot([pos_y, pos_y], [pos_x, head_x],  marker = 'o', color = 'b', markersize = 1)
-        result = {}
-        result["zEI"] = {"data":zEI, "line_1": np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist(), 
-            "line_2":np.round([[mid_line, head_height_indexes.max()], [mid_line, head_height_indexes.min()]]).astype(np.int16).tolist()}
-        result["BVR"] = {"data":BVR, "line_1":np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist(), 
-                         "line_2":np.round([[pos_y, pos_x], [pos_y, head_x]]).astype(np.int16).tolist()}
-        #print(f"zEI: {centroid_height} mm / {head_height} mm = {zEI} \n BVR: {head_gap} mm / {centroid_height} mm = {BVR}")
-
-        return result, bvr_image
+        res['BVR']['测量值'] = round(BVR.item(), 3)
+        bvr_line1 = np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist()
+        bvr_line2 = np.round([[pos_y, pos_x], [pos_y, head_x]]).astype(np.int16).tolist()
+        x, y = bvr_image.shape
+        res['BVR']['侧脑室高度'] = {
+            "point_1": [y - bvr_line1[0][0] - 1, x - bvr_line1[0][1] - 1], 
+            "point_2": [y - bvr_line1[1][0] - 1, x - bvr_line1[1][1] - 1],
+            "长度": f"{abs(bvr_line1[0][1] - bvr_line1[1][1])}mm"
+            }
+        res['BVR']['侧脑室正上方颅内高度'] = {
+            "point_1": [y - bvr_line2[0][0] - 1, x - bvr_line2[0][1] - 1], 
+            "point_2": [y - bvr_line2[1][0] - 1, x - bvr_line2[1][1] - 1],
+            "长度": f"{abs(bvr_line2[0][1] - bvr_line2[1][1])}mm"
+            }
+        
+        res['zEvans']['测量值'] = round(zEI.item(), 3)
+        zei_line1 = np.round([[pos_y, pos_x], [pos_y, max_x]]).astype(np.int16).tolist()
+        zei_line2 = np.round([[mid_line, head_height_indexes.max()], [mid_line, head_height_indexes.min()]]).astype(np.int16).tolist()
+        res['zEvans']['侧脑室高度'] = {
+            "point_1": [y - zei_line1[0][0] - 1, x - zei_line1[0][1] - 1],
+            "point_2": [y - zei_line1[1][0] - 1, x - zei_line1[1][1] - 1],
+            "长度": f"{abs(zei_line1[0][1] - zei_line1[1][1])}mm"
+        }
+        res['zEvans']['颅内最大高度'] = {
+            "point_1": [y - zei_line2[0][0] - 1, x - zei_line2[0][1] - 1],
+            "point_2": [y - zei_line2[1][0] - 1, x - zei_line2[1][1] - 1],
+            "长度": f"{abs(zei_line2[0][1] - zei_line2[1][1])}mm"
+        }
+        
+        return
