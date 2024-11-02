@@ -47,16 +47,11 @@ python main.py \
 ```
 ├── save_dir
 │   ├── dicom_1
-│   │   ├── norm_image.nii
 │   │   ├── registered_image.nii
-│   │   ├── acpc_image.nii
 │   │   ├── results.json
 ```
 模型的输出结果讲保存在指定的save_dir中，生成的results.json文件包含了各指标的测量层面、测量值以及具体的测量点（方便可视化）.
-在运行过程中，会保存3个nii文件：
-1. norm_image.nii为将体素大小标准化为1mm x 1mm x 1mm后的图像；
-2. registered_image.nii位将图像经过头动校正后的图像；
-3. acpc_image.nii为根据找到的ac和pc点，将ac、pc点置为同一水平线后的图像。
-后续所有指标的测量过程均是基于acpc_image.nii图像进行测量。
+在运行过程中，会保存1个nii文件：
+registered_image.nii位将图像经过头动校正后的图像。
 
 
