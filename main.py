@@ -61,8 +61,11 @@ def main(args):
 
         ### 检测CA指数 ###
         metrics_detector.det_ca(acpc_image, points[2], res, seg_image_size)
-        json.dump(res, open(osp.join(save_dir, "results.json"), "w"), indent = 2, ensure_ascii=False)
+        
+        save_path = osp.join(save_dir, "results.json")
+        json.dump(res, open(save_path, "w"), indent = 2, ensure_ascii=False)
 
+        print("AI automatic recognition is complete!")
         ### 手动调整 ###
         while True:
             '''
@@ -76,7 +79,8 @@ def main(args):
             if adjust == "evans":
                 layer_id = int(input_content[1]) # 86 
                 metrics_detector.det_evans(registered_image, seg_image_size, res, layer_id)
-                json.dump(res, open(osp.join(save_dir, "results.json"), "w"), indent = 2, ensure_ascii=False)
+                json.dump(res, open(save_path, "w"), indent = 2, ensure_ascii=False)
+                print("AI automatic recognition is complete!")
             elif adjust == "acpc":
                 ac_point = [int(input_content[1]), int(input_content[2])] # [109, 70]
                 pc_point = [int(input_content[3]), int(input_content[4])] # [135, 77]
@@ -86,8 +90,10 @@ def main(args):
                 acpc_image, points = adjust_acpc(ac_point + pc_point, registered_image)
                 metrics_detector.det_bvr_zei(acpc_image, points[0], mid_line, seg_image_size, res)
                 metrics_detector.det_ca(acpc_image, points[2], res, seg_image_size)
-                json.dump(res, open(osp.join(save_dir, "results.json"), "w"), indent = 2, ensure_ascii=False)
+                json.dump(res, open(save_path, "w"), indent = 2, ensure_ascii=False)
+                print("AI automatic recognition is complete!")
             else:
+                print(f"The recoginition of this dicom file {dcm_p} is complete!\nThe result is saved in {save_path}")
                 break
             
 
